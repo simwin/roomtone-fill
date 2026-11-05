@@ -26,6 +26,10 @@
 
 Метки output.breaths.txt: начало, конец, «вдохN замена». Лишнюю строку можно удалить
 и запустить с --labels; строку из .check.txt можно перенести в .breaths.txt.
+Для ocenaudio рядом пишутся output.breaths.srt и output.check.srt (места на проверку – с запасом
+±1,5 с), в режиме --labels – output.<имя файла меток>.srt; метки предыдущих шагов (*.srt входного
+файла, например .ee.srt) переносятся к выходному. Области «fix», помеченные в ocenaudio и
+экспортированные в CSV, превращает в файл меток ocen_fix.py.
 """
 import argparse, importlib.util, os
 import numpy as np
@@ -217,11 +221,18 @@ def main():
         regs = [(s, e) for s, e, _ in keep]
         open(base + ".check.txt", "w", encoding="utf-8").write(
             "".join(f"{s:.3f}\t{e:.3f}\tпроверь{i} {w}\n" for i, (s, e, w) in enumerate(check, 1)))
+        ee_fill.write_srt(base + ".check.srt", [(s, e, f"проверь{i} {w}") for i, (s, e, w) in enumerate(check, 1)], pad=1.5)
     if a.labels:                       # список уже есть – не затирать найденные раньше вдохи
-        print(f"Мест из {a.labels}: {len(regs)}")
+        import os
+        tag = "." + os.path.splitext(os.path.basename(a.labels))[0] + ".srt"
+        written = {tag}
+        ee_fill.write_srt(base + tag, [(s, e, f"fix{i} ({e - s:.2f} с)") for i, (s, e) in enumerate(regs, 1)], pad=1.5)
+        print(f"Мест из {a.labels}: {len(regs)}  (метки для ocenaudio с запасом 1,5 с: {base + tag})")
     else:
+        written = {".breaths.srt", ".check.srt"}
         open(base + ".breaths.txt", "w", encoding="utf-8").write(
             "".join(f"{s:.3f}\t{e:.3f}\tвдох{i} {'тише' if a.soft else 'замена'}\n" for i, (s, e) in enumerate(regs, 1)))
+        ee_fill.write_srt(base + ".breaths.srt", [(s, e, f"вдох{i}") for i, (s, e) in enumerate(regs, 1)])
         print(f"Вдохов: {len(regs)} → {base}.breaths.txt;  на проверку: {len(check)} → {base}.check.txt")
     for i, (s, e) in enumerate(regs, 1):
         print(f"{i:>3} {s:8.2f}–{e:8.2f}  {e - s:.2f} с")
@@ -256,7 +267,10 @@ def main():
             env[i1:i1 + fd] = ramp[::-1][: len(env[i1:i1 + fd])]
             y *= env[:, None]
     ee_fill.write_wav(a.out, sr, y, dtype, raw.ndim)
+    moved = ee_fill.carry_srt(a.inp, a.out, skip=written)   # метки ocenaudio предыдущих шагов – к новому файлу
     print(f"Готово: {a.out} (длина {len(y) / sr:.3f} с, как у исходника)")
+    if moved:
+        print("Метки ocenaudio перенесены: " + ", ".join(m.rsplit("/", 1)[-1] for m in moved))
 
 
 if __name__ == "__main__":

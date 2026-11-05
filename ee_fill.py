@@ -9,8 +9,8 @@ regions.txt – AudacityRegions.txt из Auphonic (start end label, в секу�
 той же длины, вне других регионов, и вставляет его с короткими
 равномощными кроссфейдами на краях. Длина выходного файла совпадает
 с исходной до сэмпла. Формат (частота, каналы, 16/24/32 бит) сохраняется.
-Рядом пишется output.labels.txt – метки для Audacity/ocenaudio, чтобы
-пробежаться по местам заплаток.
+Рядом пишутся метки мест заплаток: output.labels.txt (Audacity) и output.ee.srt –
+ocenaudio сам подхватывает файлы «имя.что-то.srt» рядом с имя.wav как группы меток.
 """
 import argparse, sys
 import numpy as np
@@ -225,7 +225,41 @@ def main():
     write_wav(a.out, sr, y, dtype, raw.ndim)
     lab = a.out.rsplit(".", 1)[0] + ".labels.txt"
     open(lab, "w", encoding="utf-8").write("".join(f"{s:.3f}\t{e:.3f}\tЭ{i}\n" for i, (s, e) in enumerate(done, 1)))
-    print(f"\nГотово: {a.out} ({len(y) / sr:.3f} с, как и исходник), метки: {lab}")
+    write_srt(a.out.rsplit(".", 1)[0] + ".ee.srt", [(s, e, f"Э{i}") for i, (s, e) in enumerate(done, 1)])
+    print(f"\nГотово: {a.out} ({len(y) / sr:.3f} с, как и исходник), метки: {lab} и .ee.srt (ocenaudio)")
+
+
+def srt_time(x):
+    ms = int(round(max(x, 0.0) * 1000))
+    h, ms = divmod(ms, 3600000); m, ms = divmod(ms, 60000); s, ms = divmod(ms, 1000)
+    return f"{h:02}:{m:02}:{s:02},{ms:03}"
+
+
+def write_srt(path, regs, pad=0.0):
+    """regs – [(начало, конец, текст)]; pad – запас с каждой стороны, с (чтобы слышать окружение).
+    Пустой список – файла нет (старый, если был, удаляется: иначе в ocenaudio останутся чужие метки)."""
+    import os
+    if not regs:
+        if os.path.exists(path):
+            os.remove(path)
+        return
+    blocks = [f"{i}\n{srt_time(s - pad)} --> {srt_time(e + pad)}\n{t}\n" for i, (s, e, t) in enumerate(regs, 1)]
+    open(path, "w", encoding="utf-8").write("\n".join(blocks))
+
+
+def carry_srt(inp, out, skip=()):
+    """Перенести метки ocenaudio по цепочке: имя_вход.X.srt → имя_выход.X.srt (кроме skip)."""
+    import glob, os, shutil
+    ib, ob = inp.rsplit(".", 1)[0], out.rsplit(".", 1)[0]
+    if os.path.abspath(ib) == os.path.abspath(ob):
+        return []
+    done = []
+    for f in sorted(glob.glob(glob.escape(ib) + ".*.srt")):
+        tag = f[len(ib):]                          # «.ee.srt», «.check.srt» …
+        if tag in skip:
+            continue
+        shutil.copyfile(f, ob + tag); done.append(ob + tag)
+    return done
 
 
 def write_wav(path, sr, y, dtype, ndim):

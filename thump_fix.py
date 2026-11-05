@@ -13,10 +13,17 @@
 прижимает верхи (выше 3 кГц) в окне 30 мс вокруг него до обычного уровня рядом, без провала (края 5 мс).
 Проверено 05.11: удар на тестовой записи – --cut 180 --width 0.12 --fade 50 --click.
 """
-import argparse
+import argparse, glob, os, shutil
 import numpy as np
 from scipy.io import wavfile
 from scipy.signal import butter, sosfiltfilt
+
+
+def put(arr, start, vals):
+    """arr[start:start+len(vals)] = vals с обрезкой по краям массива (возле начала/конца файла)."""
+    a0, a1 = max(0, start), min(len(arr), start + len(vals))
+    if a1 > a0:
+        arr[a0:a1] = vals[a0 - start:a1 - start]
 
 
 def main():
@@ -42,29 +49,38 @@ def main():
         hp = sosfiltfilt(sos, y[c0:c1], axis=0)
         w0 = int((t - a.width / 2) * sr) - c0
         w1 = int((t + a.width / 2) * sr) - c0
-        mix = np.zeros(c1 - c0)
-        mix[w0:w1] = 1
+        n = c1 - c0
+        mix = np.zeros(n)
         ramp = 0.5 - 0.5 * np.cos(np.linspace(0, np.pi, fd))
-        mix[w0 - fd:w0] = ramp; mix[w1:w1 + fd] = ramp[::-1]
+        put(mix, w0 - fd, ramp); put(mix, w1, ramp[::-1]); mix[max(0, w0):max(0, min(n, w1))] = 1
         y[c0:c1] = y[c0:c1] * (1 - mix[:, None]) + hp * mix[:, None]
         if a.click:
             seg = y[c0:c1]
+            if sr < 16000:
+                print("  щелчок: частота записи ниже 16 кГц – верхи не трогаю")
+                print(f"удар на {t:.3f} с: срезано ниже {a.cut:.0f} Гц в окне {a.width * 1000:.0f} мс, края {a.fade:.0f} мс")
+                continue
             bp = sosfiltfilt(butter(4, [4000, min(12000, sr / 2 * 0.95)], "band", fs=sr, output="sos"), seg.mean(1))
             h = int(sr * 0.002)
             env = np.convolve(bp ** 2, np.ones(h) / h, "same")
             ci = int(t * sr) - c0; r = int(sr * 0.04)
-            k = ci - r + int(np.argmax(env[ci - r: ci + r]))           # самый сильный щелчок рядом с ударом
+            lo_ = max(0, ci - r)
+            k = lo_ + int(np.argmax(env[lo_: max(lo_ + 1, min(len(env), ci + r))]))   # самый сильный щелчок рядом с ударом
             lp = sosfiltfilt(butter(4, 3000, "low", fs=sr, output="sos"), seg, axis=0)
             hi = seg - lp                                              # верхи выше 3 кГц
             he = np.sqrt(np.convolve((hi ** 2).mean(1), np.ones(h) / h, "same")) + 1e-9
             hw, f2 = int(sr * 0.015), int(sr * 0.005)
-            around = np.r_[he[k - 4 * hw:k - hw - f2], he[k + hw + f2:k + 4 * hw]]
+            around = np.r_[he[max(0, k - 4 * hw):max(0, k - hw - f2)], he[k + hw + f2:k + 4 * hw]]
+            if around.size == 0:
+                print("  щелчок: нет окружения для сравнения (край файла) – верхи не трогаю")
+                print(f"удар на {t:.3f} с: срезано ниже {a.cut:.0f} Гц в окне {a.width * 1000:.0f} мс, края {a.fade:.0f} мс")
+                continue
             ref = np.median(around)                                    # обычный уровень верхов рядом
             g = np.minimum(1.0, ref / he)                              # прижать щелчок до этого уровня, не ниже
             g = np.convolve(g, np.ones(h) / h, "same")
-            m2 = np.zeros(len(seg)); m2[k - hw:k + hw] = 1
+            m2 = np.zeros(len(seg))
             r2 = 0.5 - 0.5 * np.cos(np.linspace(0, np.pi, f2))
-            m2[k - hw - f2:k - hw] = r2; m2[k + hw:k + hw + f2] = r2[::-1]
+            put(m2, k - hw - f2, r2); put(m2, k + hw, r2[::-1]); m2[max(0, k - hw):k + hw] = 1
             gg = 1 - m2 * (1 - g)
             y[c0:c1] = lp + hi * gg[:, None]
             print(f"  щелчок на {(k + c0) / sr:.3f} с: верхи прижаты до уровня вокруг (окно 30 мс)")
@@ -75,6 +91,13 @@ def main():
     if raw.ndim == 1:
         y = y[:, 0]
     wavfile.write(a.out, sr, y)
+    ib, ob = a.inp.rsplit(".", 1)[0], a.out.rsplit(".", 1)[0]     # метки ocenaudio – к новому файлу
+    if os.path.abspath(ib) != os.path.abspath(ob):
+        moved = []
+        for f in sorted(glob.glob(glob.escape(ib) + ".*.srt")):
+            shutil.copyfile(f, ob + f[len(ib):]); moved.append(os.path.basename(ob + f[len(ib):]))
+        if moved:
+            print("Метки ocenaudio перенесены: " + ", ".join(moved))
 
 
 if __name__ == "__main__":

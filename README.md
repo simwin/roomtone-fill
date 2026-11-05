@@ -19,19 +19,29 @@ These scripts do the filling, plus breath detection and two small helpers.
 | `breath_soften.py` | Finds breaths in speech and fills them the same way (uses `ee_fill.py`) |
 | `thump_fix.py` | Removes a single low-frequency thump (hand hitting the mic) at a given time |
 | `sync_offset.py` | Finds the offset between two recordings of the same conversation – by audio, or by motion in the frame for a camera without sound |
+| `ocen_fix.py` | Turns regions you marked "fix" in ocenaudio (exported as CSV) into a label file for `breath_soften.py --labels` |
 
 ```
 pip install numpy scipy          # sync_offset.py also needs ffmpeg in PATH
 
 python3 ee_fill.py track.wav track.AudacityRegions.txt track_clean.wav
 python3 breath_soften.py track_clean.wav track_final.wav
-python3 thump_fix.py track_final.wav track_final2.wav --at 304.805
+python3 thump_fix.py track_final.wav track_final2.wav --at 304.805 --cut 180 --width 0.12 --fade 50 --click
+python3 ocen_fix.py regions.csv fix.txt --exclude old_fix.txt
+python3 breath_soften.py track_final2.wav track_final3.wav --labels fix.txt
 python3 sync_offset.py audio camA.wav camB.wav
 python3 sync_offset.py video camA.mov screen_recording.mov
 ```
 
-Every script writes Audacity label files next to the output, so all patched spots can be reviewed
-by ear (File → Import → Labels; Alt+→ / Alt+← jumps between labels).
+Every script writes label files next to the output, so all patched spots can be reviewed by ear:
+
+* **Audacity** – `*.labels.txt`, `*.breaths.txt`, `*.check.txt` (File → Import → Labels; Alt+→ / Alt+← jumps between labels).
+* **ocenaudio** – `name.ee.srt`, `name.breaths.srt`, `name.check.srt` (doubtful spots, padded ±1.5 s so you hear the
+  context) and `name.<labels>.srt` after a `--labels` run. ocenaudio loads every `name.*.srt` next to `name.wav`
+  as a separate marker group (Ctrl+I → Markers, ▶ plays a region). `breath_soften.py` and `thump_fix.py` copy the `*.srt`
+  of their input to their output, so the last file in the chain carries all markers.
+* To fix more spots by hand: select a spot in ocenaudio, Ctrl+K, name the region `fix`; export the regions to CSV
+  (Ctrl+I → Markers → export) and run `ocen_fix.py` + `breath_soften.py --labels`.
 
 ## How room tone is chosen (`ee_fill.py`)
 
@@ -95,6 +105,13 @@ A detected spot grows while unvoiced noise continues, but never through a sibila
 speech. Spots that are louder than typical speech minus 3 dB, longer than 1.2 s, or contain 3+
 voiced frames are **not touched** – they go to `*.check.txt` for listening. Accepted breaths are
 filled with `ee_fill.fill()` (no region extension; doubtful spots are banned as sources).
+
+## `thump_fix.py`
+
+A hand hitting the microphone has two parts: a low "thump" (below ~180 Hz) and a short broadband click at the
+moment of contact (4–12 kHz, ~18 dB above the surroundings in our case). The script high-passes a short window
+around the given time (`--cut`, `--width`, smooth edges `--fade`) and, with `--click`, limits the high band
+(above 3 kHz) in 30 ms around the strongest click to the level of the surrounding audio – no hole, no tick.
 
 ## `sync_offset.py`
 
