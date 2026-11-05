@@ -217,9 +217,12 @@ def main():
         regs = [(s, e) for s, e, _ in keep]
         open(base + ".check.txt", "w", encoding="utf-8").write(
             "".join(f"{s:.3f}\t{e:.3f}\tпроверь{i} {w}\n" for i, (s, e, w) in enumerate(check, 1)))
-    open(base + ".breaths.txt", "w", encoding="utf-8").write(
-        "".join(f"{s:.3f}\t{e:.3f}\tвдох{i} {'тише' if a.soft else 'замена'}\n" for i, (s, e) in enumerate(regs, 1)))
-    print(f"Вдохов: {len(regs)} → {base}.breaths.txt;  на проверку: {len(check)} → {base}.check.txt")
+    if a.labels:                       # список уже есть – не затирать найденные раньше вдохи
+        print(f"Мест из {a.labels}: {len(regs)}")
+    else:
+        open(base + ".breaths.txt", "w", encoding="utf-8").write(
+            "".join(f"{s:.3f}\t{e:.3f}\tвдох{i} {'тише' if a.soft else 'замена'}\n" for i, (s, e) in enumerate(regs, 1)))
+        print(f"Вдохов: {len(regs)} → {base}.breaths.txt;  на проверку: {len(check)} → {base}.check.txt")
     for i, (s, e) in enumerate(regs, 1):
         print(f"{i:>3} {s:8.2f}–{e:8.2f}  {e - s:.2f} с")
     for s, e, w in check:
@@ -229,7 +232,13 @@ def main():
 
     avoid = [(s, e) for s, e, _ in check]
     if not a.soft:
-        y, _ = ee_fill.fill(x, sr, regs, scale, extend=False, verbose=False, avoid=avoid)
+        y, done = ee_fill.fill(x, sr, regs, scale, extend=False, verbose=bool(a.labels), avoid=avoid)
+        if len(done) < len(regs):      # о пропусках говорить всегда, иначе их не заметить
+            print(f"ВНИМАНИЕ: заменено {len(done)} из {len(regs)} – для остальных не нашёлся фон:")
+            got = {round(s, 3) for s, _ in done}
+            for s, e in regs:
+                if round(s, 3) not in got:
+                    print(f"  пропущено {s:8.2f}–{e:8.2f}")
     else:
         y = x.copy()
         hop = int(sr * HOP_S); mono = x.mean(1) / scale; nfr = len(mono) // hop
